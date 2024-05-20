@@ -4474,12 +4474,18 @@ OSD
     are always in actual pixels. The effect is that changing the window size
     won't change the OSD font size.
 
+    .. note::
+
+        For scripts which draw user interface elements, it is recommended to
+        respect the value of this option when deciding whether the elements
+        are scaled with window size or not.
+
 ``--osd-shadow-color=<color>``
     See ``--sub-color``. Color used for OSD shadow.
 
     .. note::
 
-        ignored when ``--osd-back-color`` is specified (or more exactly: when
+        Ignored when ``--osd-back-color`` is specified (or more exactly: when
         that option is not set to completely transparent).
 
 ``--osd-shadow-offset=<size>``
@@ -6447,6 +6453,9 @@ them.
     order. You can also pass ``help`` to get a complete list of compiled in backends
     (sorted by the default autoprobe order).
 
+    Note that the default GPU context is subject to change, and must not be relied upon.
+    If a certain GPU context needs to be used, it must be explicitly specified.
+
     auto
         auto-select (default). Note that this context must be used alone and
         does not participate in the priority list.
@@ -6489,7 +6498,9 @@ them.
     Controls which type of graphics APIs will be accepted:
 
     auto
-        Use any available API (default)
+        Use any available API (default). Note that the default GPU API used for this
+        value is subject to change, and must not be relied upon. If a certain GPU API
+        needs to be used, it must be explicitly specified.
     opengl
         Allow only OpenGL (requires OpenGL 2.1+ or GLES 2.0+)
     vulkan

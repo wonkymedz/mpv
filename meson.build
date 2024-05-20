@@ -4,6 +4,7 @@ project('mpv',
         version: files('./VERSION'),
         meson_version: '>=0.62.0',
         default_options: [
+            'backend_max_links=16',
             'buildtype=debugoptimized',
             'b_lundef=false',
             'c_std=c11',
@@ -1310,7 +1311,8 @@ if features['vulkan'] and features['x11']
      sources += files('video/out/vulkan/context_xlib.c')
 endif
 
-features += {'vk-khr-display': cc.has_function('vkCreateDisplayPlaneSurfaceKHR', prefix: '#include <vulkan/vulkan_core.h>',
+features += {'vk-khr-display': vulkan.type_name() == 'internal' or
+                               cc.has_function('vkCreateDisplayPlaneSurfaceKHR', prefix: '#include <vulkan/vulkan_core.h>',
                                                dependencies: [vulkan])}
 if features['vk-khr-display']
     sources += files('video/out/vulkan/context_display.c')
