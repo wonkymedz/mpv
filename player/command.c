@@ -3781,6 +3781,7 @@ struct udata_ctx {
     const char *path;
     mpv_node *node;
     void *ta_parent;
+    int depth;
 };
 
 static int do_op_udata(struct udata_ctx* ctx, int action, void *arg)
@@ -3893,6 +3894,8 @@ static int do_op_udata(struct udata_ctx* ctx, int action, void *arg)
                 .arg = act->arg,
             };
 
+            if (nctx.depth++ > 100)
+                return M_PROPERTY_ERROR;
             return do_op_udata(&nctx, M_PROPERTY_KEY_ACTION, &sub_act);
         } else {
             return do_op_udata(&nctx, act->action, act->arg);
@@ -3907,6 +3910,7 @@ static int do_list_udata(int item, int action, void *arg, void *ctx)
     struct udata_ctx nctx = *(struct udata_ctx*)ctx;
     nctx.node = &nctx.node->u.list->values[item];
     nctx.ta_parent = nctx.node->u.list;
+    nctx.depth = 0;
 
     return do_op_udata(&nctx, action, arg);
 }
@@ -7127,7 +7131,10 @@ void command_init(struct MPContext *mpctx)
         };
 
         if (co->opt->type == &m_option_type_alias) {
-            prop.priv = co->opt->priv;
+            char buf[M_CONFIG_MAX_OPT_NAME_LEN];
+            const char *alias = m_config_shadow_get_alias_from_opt(mpctx->mconfig->shadow, co->opt_id,
+                                                                   buf, sizeof(buf));
+            prop.priv = talloc_strdup(ctx, alias);
 
             prop.call = co->opt->deprecation_message ?
                             mp_property_deprecated_alias : mp_property_alias;
@@ -7138,8 +7145,9 @@ void command_init(struct MPContext *mpctx)
             // be set as property.
             struct m_config_option *co2 = co;
             while (co2 && co2->opt->type == &m_option_type_alias) {
-                const char *alias = (const char *)co2->opt->priv;
-                co2 = m_config_get_co_raw(mpctx->mconfig, bstr0(alias));
+                const char *co2_alias = m_config_shadow_get_alias_from_opt(mpctx->mconfig->shadow, co2->opt_id,
+                                                                           buf, sizeof(buf));
+                co2 = m_config_get_co_raw(mpctx->mconfig, bstr0(co2_alias));
             }
             if (!co2)
                 continue;
