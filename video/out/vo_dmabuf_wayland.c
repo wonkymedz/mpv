@@ -43,10 +43,7 @@
 // Generated from wayland-protocols
 #include "linux-dmabuf-unstable-v1.h"
 #include "viewporter.h"
-
-#if HAVE_WAYLAND_PROTOCOLS_1_27
 #include "single-pixel-buffer-v1.h"
-#endif
 
 // We need at least enough buffers to avoid a
 // flickering artifact in certain formats.
@@ -526,8 +523,8 @@ static void resize(struct vo *vo)
     vo->opts->pan_x = 0;
     vo->opts->pan_y = 0;
     vo_get_src_dst_rects(vo, &src, &dst, &p->screen_osd_res);
-    int window_w = p->screen_osd_res.ml + p->screen_osd_res.mr + mp_rect_w(dst);
-    int window_h = p->screen_osd_res.mt + p->screen_osd_res.mb + mp_rect_h(dst);
+    int window_w = MPMAX(0, p->screen_osd_res.ml + p->screen_osd_res.mr) + mp_rect_w(dst);
+    int window_h = MPMAX(0, p->screen_osd_res.mt + p->screen_osd_res.mb) + mp_rect_h(dst);
     wp_viewport_set_destination(wl->viewport, lround(window_w / wl->scaling),
                                 lround(window_h / wl->scaling));
 
@@ -782,10 +779,8 @@ static int preinit(struct vo *vo)
     }
 
     if (vo->wl->single_pixel_manager) {
-#if HAVE_WAYLAND_PROTOCOLS_1_27
         p->solid_buffer = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(
             vo->wl->single_pixel_manager, 0, 0, 0, UINT32_MAX); /* R, G, B, A */
-#endif
     } else {
         int width = 1;
         int height = 1;
