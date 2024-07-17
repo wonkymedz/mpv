@@ -1318,7 +1318,8 @@ static int mp_property_filter_metadata(void *ctx, struct m_property *prop,
         if (!chain)
             return M_PROPERTY_UNAVAILABLE;
 
-        if (ka->action != M_PROPERTY_GET_TYPE) {
+        int remaining = strlen(rem);
+        if (remaining || ka->action != M_PROPERTY_GET_TYPE) {
             struct mp_filter_command cmd = {
                 .type = MP_FILTER_COMMAND_GET_META,
                 .res = &metadata,
@@ -1331,7 +1332,7 @@ static int mp_property_filter_metadata(void *ctx, struct m_property *prop,
         }
 
         int res;
-        if (strlen(rem)) {
+        if (remaining) {
             struct m_property_action_arg next_ka = *ka;
             next_ka.key = rem;
             res = tag_property(M_PROPERTY_KEY_ACTION, &next_ka, metadata);
@@ -3592,7 +3593,8 @@ static int mp_property_option_info(void *ctx, struct m_property *prop,
 
         union m_option_value def = m_option_value_default;
         const void *def_ptr = m_config_get_co_default(mpctx->mconfig, co);
-        if (def_ptr && opt->type->size > 0)
+        bool has_default = def_ptr && opt->type->size > 0;
+        if (has_default)
             memcpy(&def, def_ptr, opt->type->size);
 
         bool has_minmax = opt->min < opt->max &&
@@ -3630,7 +3632,7 @@ static int mp_property_option_info(void *ctx, struct m_property *prop,
             {"set-from-commandline",    SUB_PROP_BOOL(co->is_set_from_cmdline)},
             {"set-locally",             SUB_PROP_BOOL(co->is_set_locally)},
             {"expects-file",            SUB_PROP_BOOL(opt->flags & M_OPT_FILE)},
-            {"default-value",           *opt, def},
+            {"default-value",           *opt, def, .unavailable = !has_default},
             {"min",                     SUB_PROP_DOUBLE(opt->min),
              .unavailable = !(has_minmax && opt->min != DBL_MIN)},
             {"max",                     SUB_PROP_DOUBLE(opt->max),
