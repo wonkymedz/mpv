@@ -299,10 +299,11 @@ static void print_stream(struct MPContext *mpctx, struct track *t, bool indent)
         if (s && s->codec->samplerate)
             APPEND(b, " %d Hz", s->codec->samplerate);
     }
-    if (s && s->codec->bitrate)
+    if (s && s->codec->bitrate) {
         APPEND(b, " %d kbps", (s->codec->bitrate + 500) / 1000);
-    if (s && s->hls_bitrate)
-        APPEND(b, " %d HLS kbps", (s->hls_bitrate + 500) / 1000);
+    } else if (s && s->hls_bitrate) {
+        APPEND(b, " %d kbps", (s->hls_bitrate + 500) / 1000);
+    }
     APPEND(b, ")");
 
     bool first = true;
@@ -1218,7 +1219,7 @@ static void start_open(struct MPContext *mpctx, char *url, int url_flags,
     // Don't allow to open local paths or stdin during fuzzing
     bstr open_url = bstr0(mpctx->open_url);
     if (bstr_startswith0(open_url, "/") ||
-        bstr_startswith0(open_url, "./") ||
+        bstr_startswith0(open_url, ".") ||
         bstr_equals0(open_url, "-"))
     {
         cancel_open(mpctx);
