@@ -142,27 +142,6 @@ local function len_utf8(str)
     return len
 end
 
-local function truncate_utf8(str, max_length)
-    local len = 0
-    local pos = 1
-    while pos <= #str do
-        local last_pos = pos
-        pos = next_utf8(str, pos)
-        len = len + 1
-        if pos > last_pos + 1 then
-            if len == max_length - 1 then
-                pos = last_pos
-            else
-                len = len + 1
-            end
-        end
-        if len == max_length - 1 then
-            return str:sub(1, pos - 1) .. '⋯'
-        end
-    end
-    return str
-end
-
 
 -- Functions to calculate the font width.
 local width_length_ratio = 0.5
@@ -371,22 +350,7 @@ local function fuzzy_find(needle, haystacks)
     return result
 end
 
-local function calculate_max_terminal_width()
-    local max_width = mp.get_property_native('term-size/w', 80)
-
-    -- The longest module name is vo/gpu-next/libplacebo.
-    if mp.get_property_native('msg-module') then
-        max_width = max_width - 24
-    end
-
-    if mp.get_property_native('msg-time') then
-        max_width = max_width - 13
-    end
-
-    return max_width
-end
-
-local function populate_log_with_matches(max_width)
+local function populate_log_with_matches()
     if not selectable_items or selected_match == 0 then
         return
     end
@@ -454,8 +418,7 @@ local function populate_log_with_matches(max_width)
 
     for i = first_match_to_print, last_match_to_print do
         log[#log + 1] = {
-            text = (max_width and truncate_utf8(matches[i].text, max_width)
-                    or matches[i].text),
+            text = matches[i].text,
             style = i == selected_match and styles.selected_suggestion or '',
             terminal_style = i == selected_match and terminal_styles.selected_suggestion or '',
         }
@@ -478,11 +441,12 @@ local function print_to_terminal()
         return
     end
 
-    populate_log_with_matches(calculate_max_terminal_width())
+    populate_log_with_matches()
 
     local log = ''
+    local clip = selectable_items and mp.get_property('term-clip-cc') or ''
     for _, log_line in ipairs(log_buffers[id]) do
-        log = log .. log_line.terminal_style .. log_line.text .. '\027[0m\n'
+        log = log .. clip .. log_line.terminal_style .. log_line.text .. '\027[0m\n'
     end
 
     local suggestions = ''
@@ -791,6 +755,11 @@ local function help_command(param)
     log_add(output:sub(1, -2))
 end
 
+local function unbind_mouse()
+    mp.remove_key_binding('_console_mouse_move')
+    mp.remove_key_binding('_console_mbtn_left')
+end
+
 -- Run the current command and clear the line (Enter)
 local function handle_enter()
     if searching_history then
@@ -800,6 +769,7 @@ local function handle_enter()
         cursor = #line + 1
         log_buffers[id] = {}
         update()
+        unbind_mouse()
         return
     end
 
@@ -831,6 +801,46 @@ local function handle_enter()
     end
 
     clear()
+end
+
+local function highlight_hovered_line()
+    local height = mp.get_property_native('osd-height')
+    if height == 0 then
+        return
+    end
+
+    local y = mp.get_property_native('mouse-pos').y - global_margins.t * height
+    -- Calculate how many lines could be printed without decreasing them for
+    -- the input line and OSC.
+    local max_lines = height / mp.get_property_native('display-hidpi-scale')
+    / opts.font_size
+    local clicked_line = math.floor(y / height * max_lines + .5)
+
+    -- Subtract 1 line for "n hidden items" when necessary.
+    local offset = first_match_to_print == 1 and 0 or first_match_to_print - 2
+    max_lines = calculate_max_log_lines()
+
+    if #matches < max_lines then
+        clicked_line = clicked_line - (max_lines - #matches)
+        max_lines = #matches
+    elseif offset + max_lines < #matches then
+        -- Subtract 1 line for "n hidden items".
+        max_lines = max_lines - 1
+    end
+
+    if selected_match ~= offset + clicked_line
+        and clicked_line > 0 and clicked_line <= max_lines then
+        selected_match = offset + clicked_line
+        update()
+    end
+end
+
+local function bind_mouse()
+    mp.add_forced_key_binding('MOUSE_MOVE', '_console_mouse_move', highlight_hovered_line)
+    mp.add_forced_key_binding('MBTN_LEFT', '_console_mbtn_left', function()
+        highlight_hovered_line()
+        handle_enter()
+    end)
 end
 
 -- Go to the specified position in the command history
@@ -932,6 +942,7 @@ local function search_history()
     end
 
     update()
+    bind_mouse()
 end
 
 local function page_up_or_prev_char()
@@ -1082,7 +1093,12 @@ end
 
 -- Paste text from the window-system's clipboard. 'clip' determines whether the
 -- clipboard or the primary selection buffer is used (on X11 and Wayland only.)
-local function paste(clip)
+local function paste(clip, is_wheel)
+    if is_wheel and selectable_items then
+        handle_enter()
+        return
+    end
+
     local text = get_clipboard(clip)
     local before_cur = line:sub(1, cursor - 1)
     local after_cur = line:sub(cursor)
@@ -1567,7 +1583,7 @@ local function get_bindings()
         { 'shift+del',   handle_del                             },
         { 'ins',         handle_ins                             },
         { 'shift+ins',   function() paste(false) end            },
-        { 'mbtn_mid',    function() paste(false) end            },
+        { 'mbtn_mid',    function() paste(false, true) end            },
         { 'left',        function() prev_char() end             },
         { 'ctrl+b',      function() page_up_or_prev_char() end  },
         { 'right',       function() next_char() end             },
@@ -1665,6 +1681,7 @@ set_active = function (active)
         cursor = 1
         selectable_items = nil
         log_buffers[id] = {}
+        unbind_mouse()
     else
         repl_active = false
         suggestion_buffer = {}
@@ -1679,6 +1696,7 @@ set_active = function (active)
             cursor = 1
             selectable_items = nil
             dont_bind_up_down = false
+            unbind_mouse()
         end
         collectgarbage()
     end
@@ -1754,6 +1772,7 @@ mp.register_script_message('get-input', function (script_name, args)
         for i, item in ipairs(selectable_items) do
             matches[i] = { index = i, text = item }
         end
+        bind_mouse()
     end
 
     set_active(true)
