@@ -251,7 +251,6 @@ sources = files(
 
     ## osdep
     'osdep/io.c',
-    'osdep/semaphore-mac.c',
     'osdep/subprocess.c',
     'osdep/timer.c',
 
@@ -298,6 +297,11 @@ flags_c += cc.get_supported_arguments(test_flags_c)
 
 if cc.has_multi_arguments('-Wformat', '-Werror=format-security')
     flags += '-Werror=format-security'
+endif
+
+if cc.get_id() == 'gcc'
+    # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=66425
+    flags +='-Wno-unused-result'
 endif
 
 darwin = host_machine.system() == 'darwin'
@@ -1816,11 +1820,16 @@ if get_option('cplayer')
 
     if not win32 and not darwin
         if meson.can_run_host_binaries()
+            mpv_protocols = custom_target('mpv_protocols',
+                output: 'mpv_protocols',
+                command: [mpv, '--no-config','--list-protocols'],
+                capture: true,
+            )
             mpv_desktop_path = join_paths(source_root, 'etc', 'mpv.desktop')
             custom_target('mpv.desktop',
-                depends: mpv,
+                input: mpv_protocols,
                 output: 'mpv.desktop',
-                command: [mpv_desktop, mpv_desktop_path, mpv.full_path(), '@OUTPUT@'],
+                command: [mpv_desktop, mpv_desktop_path, '@INPUT@', '@OUTPUT@'],
                 install: true,
                 install_dir: join_paths(datadir, 'applications'),
             )
