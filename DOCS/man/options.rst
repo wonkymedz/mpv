@@ -828,12 +828,15 @@ Program Behavior
 
     ``--scripts`` is a path list option. See `List Options`_ for details.
 
-``--script-opts=key1=value1,key2=value2,...``
+``--script-opt=<key=value>``, ``--script-opts=key1=value1,key2=value2,...``
     Set options for scripts. A script can query an option by key. If an
     option is used and what semantics the option value has depends entirely on
     the loaded scripts. Values not claimed by any scripts are ignored.
 
-    This is a key/value list option. See `List Options`_ for details.
+    Each use of the ``--script-opt`` option will add another option to the
+    internal list, while ``--script-opts`` takes a list of options at once,
+    and overwrites the internal list with it. The latter is a key/value list
+    option. See `List Options`_ for details.
 
 ``--merge-files``
     Pretend that all files passed to mpv are concatenated into a single, big
@@ -3658,9 +3661,9 @@ Window
     is being used.
 
     The auto option enumerates XRandr providers for autodetection. If amd, radeon,
-    intel, or nouveau (the standard x86 Mesa drivers) is found and nvidia is NOT
-    found, presentation feedback is enabled. Other drivers are not assumed to
-    work, so they are not enabled automatically.
+    intel, or nouveau (the standard x86 Mesa drivers) is found presentation
+    feedback is enabled. Other drivers are not assumed to work, so they are not
+    enabled automatically.
 
     ``yes`` or ``no`` can still be passed regardless to enable/disable this
     mechanism in case there is good/bad behavior with whatever your combination
@@ -6600,6 +6603,21 @@ them.
     Enables the default menu bar shortcuts (default: yes). The menu bar shortcuts always take
     precedence over any other shortcuts, they are not propagated to the mpv core and they can't be
     used in config files like ``input.conf`` or script bindings.
+
+``--macos-bundle-path=path1,path2,...``
+    App Bundles operate in their own shell environment that is different from the one in the
+    terminal. The default PATH variable for all Bundles is ``/usr/bin:/bin:/usr/sbin:/sbin``.
+    Because of that mpv can not find binaries installed by package manager that might be used in
+    scripts for example. This option prepends all given paths to the default Bundle PATH.
+
+    Default value in following order:
+
+    :/usr/local/bin:     homebrew (Intel) install path
+    :/usr/local/sbin:    homebrew (Intel) install path
+    :/opt/local/bin:     MacPorts install path
+    :/opt/local/sbin:    MacPorts install path
+    :/opt/homebrew/bin:  homebrew (ARM) install path
+    :/opt/homebrew/sbin: homebrew (ARM) install path
 
 ``--android-surface-size=<WxH>``
     Set dimensions of the rendering surface used by the Android gpu context.
