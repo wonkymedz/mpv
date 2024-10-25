@@ -2076,7 +2076,6 @@ static const char *track_type_name(struct track *t)
     return NULL;
 }
 
-
 static char *append_track_info(char *res, struct track *track)
 {
     res = talloc_strdup_append(res, track->selected ? list_current : list_normal);
@@ -2162,6 +2161,7 @@ static int property_list_tracks(void *ctx, struct m_property *prop,
             if (found && type < STREAM_TYPE_COUNT - 1) {
                 res = talloc_asprintf_append(res, "\n");
                 found = false;
+            }
         }
 
         struct demuxer *demuxer = mpctx->demuxer;
@@ -3938,7 +3938,7 @@ static int do_op_udata(struct udata_ctx* ctx, int action, void *arg)
         assert(node);
         m_option_copy(&udata_type, arg, node);
         return M_PROPERTY_OK;
-    case M_PROPERTY_FIXED_LEN_PRINT: 
+    case M_PROPERTY_FIXED_LEN_PRINT:
     case M_PROPERTY_PRINT: {
         char *str = m_option_pretty_print(&udata_type, node, action == M_PROPERTY_FIXED_LEN_PRINT);
         *(char **)arg = str;
@@ -7336,7 +7336,7 @@ static void command_event(struct MPContext *mpctx, int event, void *arg)
     }
 
     if (event == MPV_EVENT_IDLE)
-        run_command_opts(mpctx);		
+        run_command_opts(mpctx);
 
     if (event == MPV_EVENT_END_FILE)
         mp_msg_flush_status_line(mpctx->log, false);
@@ -7528,7 +7528,7 @@ void mp_option_change_callback(void *ctx, struct m_config_option *co, int flags,
             vo_control(mpctx->video_out, VOCTRL_EXTERNAL_RESIZE, NULL);
     }
 
-   if (opt_ptr == &opts->input_commands) {
+    if (opt_ptr == &opts->input_commands) {
         mpctx->command_ctx->command_opts_processed = false;
         run_command_opts(mpctx);
     }
