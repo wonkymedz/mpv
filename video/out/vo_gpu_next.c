@@ -133,7 +133,6 @@ struct priv {
     bool is_interpolated;
     bool want_reset;
     bool frame_pending;
-    bool redraw;
 
     pl_options pars;
     struct m_config_cache *opts_cache;
@@ -595,7 +594,7 @@ static bool map_frame(pl_gpu gpu, pl_tex *tex, const struct pl_source_frame *src
                       struct pl_frame *frame)
 {
     struct mp_image *mpi = src->frame_data;
-    const struct mp_image_params *par = &mpi->params;
+    struct mp_image_params par = mpi->params;
     struct frame_priv *fp = mpi->priv;
     struct vo *vo = fp->vo;
     struct priv *p = vo->priv;
@@ -611,40 +610,25 @@ static bool map_frame(pl_gpu gpu, pl_tex *tex, const struct pl_source_frame *src
             return false;
         }
 
-        par = &p->hwdec_mapper->dst_params;
+        par = p->hwdec_mapper->dst_params;
     }
 
+    mp_image_params_guess_csp(&par);
+
     *frame = (struct pl_frame) {
-        .color = par->color,
-        .repr = par->repr,
+        .color = par.color,
+        .repr = par.repr,
         .profile = {
             .data = mpi->icc_profile ? mpi->icc_profile->data : NULL,
             .len = mpi->icc_profile ? mpi->icc_profile->size : 0,
         },
-        .rotation = par->rotate / 90,
+        .rotation = par.rotate / 90,
         .user_data = mpi,
     };
 
-    // mp_image, like AVFrame, likes communicating RGB/XYZ/YCbCr status
-    // implicitly via the image format, rather than the actual tagging.
-    switch (mp_imgfmt_get_forced_csp(par->imgfmt)) {
-    case PL_COLOR_SYSTEM_RGB:
-        frame->repr.sys = PL_COLOR_SYSTEM_RGB;
-        frame->repr.levels = PL_COLOR_LEVELS_FULL;
-        break;
-    case PL_COLOR_SYSTEM_XYZ:
-        frame->repr.sys = PL_COLOR_SYSTEM_XYZ;
-        break;
-    case PL_COLOR_SYSTEM_UNKNOWN:
-        if (!frame->repr.sys)
-            frame->repr.sys = pl_color_system_guess_ycbcr(par->w, par->h);
-        break;
-    default: break;
-    }
-
     if (fp->hwdec) {
 
-        struct mp_imgfmt_desc desc = mp_imgfmt_get_desc(par->imgfmt);
+        struct mp_imgfmt_desc desc = mp_imgfmt_get_desc(par.imgfmt);
         frame->acquire = hwdec_acquire;
         frame->release = hwdec_release;
         frame->num_planes = desc.num_planes;
@@ -704,7 +688,7 @@ static bool map_frame(pl_gpu gpu, pl_tex *tex, const struct pl_source_frame *src
     }
 
     // Update chroma location, must be done after initializing planes
-    pl_frame_set_chroma_location(frame, par->chroma_location);
+    pl_frame_set_chroma_location(frame, par.chroma_location);
 
     if (mpi->film_grain)
         pl_film_grain_from_av(&frame->film_grain, (AVFilmGrainParams *) mpi->film_grain->data);
@@ -2134,6 +2118,11 @@ static void update_hook_opts(struct priv *p, char **opts, const char *shaderpath
     if (!mp_splitext(basename, &shadername))
         shadername = bstr0(basename);
 
+    for (int i = 0; i < hook->num_parameters; i++) {
+        const struct pl_hook_par *hp = &hook->parameters[i];
+        memcpy(hp->data, &hp->initial, sizeof(*hp->data));
+    }
+
     for (int n = 0; opts[n * 2]; n++) {
         struct bstr k = bstr0(opts[n * 2 + 0]);
         struct bstr v = bstr0(opts[n * 2 + 1]);
@@ -2329,6 +2318,9 @@ AV_NOWARN_DEPRECATED(
     }
 
     pars->params.hooks = p->hooks;
+
+    MP_DBG(p, "Render options updated, resetting render state.\n");
+    p->want_reset = true;
 }
 
 const struct vo_driver video_out_gpu_next = {

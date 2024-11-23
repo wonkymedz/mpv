@@ -19,7 +19,7 @@ local function detect_platform()
     local platform = mp.get_property_native('platform')
     if platform == 'darwin' or platform == 'windows' then
         return platform
-    elseif os.getenv('WAYLAND_DISPLAY') then
+    elseif os.getenv('WAYLAND_DISPLAY') or os.getenv('WAYLAND_SOCKET') then
         return 'wayland'
     end
     return 'x11'
@@ -31,7 +31,7 @@ local platform = detect_platform()
 local opts = {
     font = "",
     font_size = 24,
-    border_size = 1.5,
+    border_size = 1.65,
     scale_with_window = "auto",
     case_sensitive = platform ~= 'windows' and true or false,
     history_dedup = true,
@@ -79,7 +79,6 @@ local line = ''
 local cursor = 1
 local default_prompt = '>'
 local prompt = default_prompt
-local bottom_left_margin = 6
 local default_id = 'default'
 local id = default_id
 local histories = {[id] = {}}
@@ -106,6 +105,8 @@ local selected_match = 1
 local first_match_to_print = 1
 local default_item
 
+local complete
+local cycle_through_suggestions
 local set_active
 
 
@@ -278,7 +279,7 @@ local function calculate_max_log_lines()
 
     return math.floor((select(2, get_scaled_osd_dimensions())
                        * (1 - global_margins.t - global_margins.b)
-                       - bottom_left_margin)
+                       - mp.get_property_native('osd-margin-y'))
                       / opts.font_size
                       -- Subtract 1 for the input line and 0.5 for the empty
                       -- line between the log and the input line.
@@ -377,8 +378,8 @@ local function format_table(list, width_max, rows_max)
     return table.concat(rows, ass_escape('\n')), row_count
 end
 
-local function fuzzy_find(needle, haystacks)
-    local result = require 'mp.fzy'.filter(needle, haystacks)
+local function fuzzy_find(needle, haystacks, case_sensitive)
+    local result = require 'mp.fzy'.filter(needle, haystacks, case_sensitive)
     if line ~= '' then -- Prevent table.sort() from reordering the items.
         table.sort(result, function (i, j)
             return i[3] > j[3]
@@ -515,6 +516,9 @@ local function update()
 
     local screenx, screeny = get_scaled_osd_dimensions()
 
+    local marginx = mp.get_property_native('osd-margin-x')
+    local marginy = mp.get_property_native('osd-margin-y')
+
     local coordinate_top = math.floor(global_margins.t * screeny + 0.5)
     local clipping_coordinates = '0,' .. coordinate_top .. ',' ..
                                  screenx .. ',' .. screeny
@@ -523,10 +527,10 @@ local function update()
     local font = get_font()
     local style = '{\\r' ..
                   '\\1a&H00&\\3a&H00&\\1c&Heeeeee&\\3c&H111111&' ..
-                  (has_shadow and '\\4a&H99&\\4c&H000000&' or '') ..
+                  (has_shadow and '\\4a&H99&\\4c&H000000&\\xshad0\\yshad1' or '') ..
                   (font and '\\fn' .. font or '') ..
                   '\\fs' .. opts.font_size ..
-                  '\\bord' .. opts.border_size .. '\\xshad0\\yshad1\\fsp0' ..
+                  '\\bord' .. opts.border_size .. '\\fsp0' ..
                   (selectable_items and '\\q2' or '\\q1') ..
                   '\\clip(' .. clipping_coordinates .. ')}'
     -- Create the cursor glyph as an ASS drawing. ASS will draw the cursor
@@ -552,8 +556,10 @@ local function update()
     local suggestion_ass = ''
     if next(suggestion_buffer) then
         -- Estimate how many characters fit in one line
-        local width_max = math.floor((screenx - bottom_left_margin -
-                                     mp.get_property_native('osd-margin-x') * 2 * screeny / 720)
+        -- Even with bottom-left anchoring,
+        -- libass/ass_render.c:ass_render_event() subtracts --osd-margin-x from
+        -- the maximum text width twice.
+        local width_max = math.floor((screenx - marginx - marginx * 2 / scale_factor())
                                      / opts.font_size * get_font_hw_ratio())
 
         local suggestions, rows = format_table(suggestion_buffer, width_max, lines_max)
@@ -577,7 +583,7 @@ local function update()
 
     ass:new_event()
     ass:an(1)
-    ass:pos(bottom_left_margin, screeny - bottom_left_margin - global_margins.b * screeny)
+    ass:pos(marginx, screeny - marginy - global_margins.b * screeny)
     ass:append(log_ass .. '\\N')
     ass:append(suggestion_ass)
     ass:append(style .. ass_escape(prompt) .. ' ' .. before_cur)
@@ -588,7 +594,7 @@ local function update()
     -- cursor appear in front of the text.
     ass:new_event()
     ass:an(1)
-    ass:pos(bottom_left_margin, screeny - bottom_left_margin - global_margins.b * screeny)
+    ass:pos(marginx, screeny - marginy - global_margins.b * screeny)
     ass:append(style .. '{\\alpha&HFF&}' .. ass_escape(prompt) .. ' ' .. before_cur)
     ass:append(cglyph)
     ass:append(style .. '{\\alpha&HFF&}' .. after_cur)
@@ -651,10 +657,20 @@ local function handle_edit()
         for i, match in ipairs(fuzzy_find(line, selectable_items)) do
             matches[i] = { index = match, text = selectable_items[match] }
         end
+
+        update()
+
+        return
     end
 
-    suggestion_buffer = {}
-    update()
+    -- Don't show completions after a command is entered because they move its
+    -- output up, and allow clearing completions by emptying the line.
+    if line == '' then
+        suggestion_buffer = {}
+        update()
+    else
+        complete()
+    end
 
     if input_caller then
         mp.commandv('script-message-to', input_caller, 'input-event', 'edited',
@@ -806,6 +822,10 @@ local function handle_enter()
         mp.commandv('script-message-to', input_caller, 'input-event', 'submit',
                     utils.format_json({line}))
     else
+        if selected_suggestion_index == 0 then
+            cycle_through_suggestions()
+        end
+
         -- match "help [<text>]", return <text> or "", strip all whitespace
         local help = line:match('^%s*help%s+(.-)%s*$') or
                      (line:match('^%s*help$') and '')
@@ -823,7 +843,8 @@ local function determine_hovered_item()
     local height = select(2, get_scaled_osd_dimensions())
     local y = mp.get_property_native('mouse-pos').y / scale_factor()
     local log_bottom_pos = height * (1 - global_margins.b)
-                           - bottom_left_margin - 1.5 * opts.font_size
+                           - mp.get_property_native('osd-margin-y')
+                           - 1.5 * opts.font_size
 
     if y > log_bottom_pos then
         return
@@ -1170,20 +1191,6 @@ local function property_list()
         properties[#properties + 1] = 'current-tracks/' .. sub_property
     end
 
-    for _, option in ipairs(mp.get_property_native('options')) do
-        properties[#properties + 1] = 'options/' .. option
-        properties[#properties + 1] = 'file-local-options/' .. option
-        properties[#properties + 1] = 'option-info/' .. option
-
-        for _, sub_property in pairs({
-            'name', 'type', 'set-from-commandline', 'set-locally',
-            'expects-file', 'default-value', 'min', 'max', 'choices',
-        }) do
-            properties[#properties + 1] = 'option-info/' .. option .. '/' ..
-                                          sub_property
-        end
-    end
-
     return properties
 end
 
@@ -1344,64 +1351,16 @@ local function strip_common_characters(str, prefix)
     max_overlap_length(prefix, str)))
 end
 
--- Find the longest common case-sensitive prefix of the entries in "list".
-local function find_common_prefix(list)
-    local prefix = list[1]
-
-    for i = 2, #list do
-        prefix = prefix:sub(1, common_prefix_length(prefix, list[i]))
-    end
-
-    return prefix
-end
-
--- Return the entries of "list" beginning with "part" and the longest common
--- prefix of the matches.
-local function complete_match(part, list)
-    local completions = {}
-
-    for _, candidate in pairs(list) do
-        if candidate:sub(1, part:len()) == part then
-            completions[#completions + 1] = candidate
+cycle_through_suggestions = function (backwards)
+    if #suggestion_buffer == 0 then
+        -- Allow Tab completion of commands before typing anything.
+        if line == '' then
+            complete()
         end
+
+        return
     end
 
-    local prefix = find_common_prefix(completions)
-
-    if opts.case_sensitive then
-        return completions, prefix or part
-    end
-
-    completions = {}
-    local lower_case_completions = {}
-    local lower_case_part = part:lower()
-
-    for _, candidate in pairs(list) do
-        if candidate:sub(1, part:len()):lower() == lower_case_part then
-            completions[#completions + 1] = candidate
-            lower_case_completions[#lower_case_completions + 1] = candidate:lower()
-        end
-    end
-
-    local lower_case_prefix = find_common_prefix(lower_case_completions)
-
-    -- Behave like GNU readline with completion-ignore-case On.
-    -- part = 'fooBA', completions = {'foobarbaz', 'fooBARqux'} =>
-    -- prefix = 'fooBARqux', lower_case_prefix = 'foobar', return 'fooBAR'
-    if prefix then
-        return completions, prefix:sub(1, lower_case_prefix:len())
-    end
-
-    -- part = 'fooba', completions = {'fooBARbaz', 'fooBarqux'} =>
-    -- prefix = nil, lower_case_prefix ='foobar', return 'fooBAR'
-    if lower_case_prefix then
-        return completions, completions[1]:sub(1, lower_case_prefix:len())
-    end
-
-    return {}, part
-end
-
-local function cycle_through_suggestions(backwards)
     selected_suggestion_index = selected_suggestion_index + (backwards and -1 or 1)
 
     if selected_suggestion_index > #suggestion_buffer then
@@ -1417,13 +1376,8 @@ local function cycle_through_suggestions(backwards)
     update()
 end
 
--- Complete the option or property at the cursor (TAB)
-local function complete(backwards)
-    if #suggestion_buffer > 0 then
-        cycle_through_suggestions(backwards)
-        return
-    end
-
+-- Show autocompletions.
+complete = function ()
     if input_caller then
         completion_old_line = line
         completion_old_cursor = cursor
@@ -1490,6 +1444,10 @@ local function complete(backwards)
     -- comparisons.
     if before_cur == '' or before_cur:find('[%s;]$') then
         tokens[#tokens + 1] = { text = "", pos = cursor }
+    elseif first_useful_token_index > 1 and
+           command_prefixes[tokens[first_useful_token_index - 1].text] then
+        update()
+        return
     end
 
     local add_actions = {
@@ -1582,24 +1540,16 @@ local function complete(backwards)
         end
     end
 
-    if completions == nil then
-        return
+    suggestion_buffer = {}
+    selected_suggestion_index = 0
+    completions = completions or {}
+    completion_pos = completion_pos or 1
+    for i, match in ipairs(fuzzy_find(before_cur:sub(completion_pos),
+                                      completions, opts.case_sensitive)) do
+        suggestion_buffer[i] = completions[match]
     end
 
-    local prefix
-    completions, prefix =
-        complete_match(before_cur:sub(completion_pos), completions)
-
-    if #completions == 1 then
-        prefix = prefix .. completion_append
-        after_cur = strip_common_characters(after_cur, completion_append)
-    else
-        table.sort(completions)
-        suggestion_buffer = completions
-        selected_suggestion_index = 0
-    end
-
-    before_cur = before_cur:sub(1, completion_pos - 1) .. prefix
+    -- Expand ~/ with file completion.
     cursor = before_cur:len() + 1
     line = before_cur .. after_cur
     update()
@@ -1641,9 +1591,9 @@ local function get_bindings()
         { 'alt+b',       prev_word                              },
         { 'ctrl+right',  next_word                              },
         { 'alt+f',       next_word                              },
-        { 'tab',         complete                               },
-        { 'ctrl+i',      complete                               },
-        { 'shift+tab',   function() complete(true) end          },
+        { 'tab',         cycle_through_suggestions              },
+        { 'ctrl+i',      cycle_through_suggestions              },
+        { 'shift+tab',   function() cycle_through_suggestions(true) end },
         { 'ctrl+a',      go_home                                },
         { 'home',        go_home                                },
         { 'ctrl+e',      go_end                                 },
@@ -1806,8 +1756,12 @@ mp.register_script_message('get-input', function (script_name, args)
     history = histories[id]
     history_pos = #history + 1
 
-    selectable_items = args.items
-    if selectable_items then
+    if args.items then
+        selectable_items = {}
+        for i, item in ipairs(args.items) do
+            selectable_items[i] = item:gsub("[\r\n].*", "⋯"):sub(1, 300)
+        end
+
         matches = {}
         selected_match = args.default_item or 1
         default_item = args.default_item
@@ -1873,18 +1827,14 @@ mp.register_script_message('complete', function(list, start_pos)
         return
     end
 
-    local completions, prefix = complete_match(line:sub(start_pos, cursor),
-                                               utils.parse_json(list))
-    local before_cur = line:sub(1, start_pos - 1) .. prefix
-    local after_cur = line:sub(cursor)
-    cursor = before_cur:len() + 1
-    line = before_cur .. after_cur
-
-    if #completions > 1 then
-        suggestion_buffer = completions
-        selected_suggestion_index = 0
-        completion_pos = start_pos
-        completion_append = ''
+    suggestion_buffer = {}
+    selected_suggestion_index = 0
+    local completions = utils.parse_json(list)
+    completion_pos = start_pos
+    completion_append = ''
+    for i, match in ipairs(fuzzy_find(line:sub(completion_pos, cursor),
+                                      completions)) do
+        suggestion_buffer[i] = completions[match]
     end
 
     update()
