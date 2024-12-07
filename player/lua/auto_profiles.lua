@@ -194,7 +194,8 @@ mp.observe_property("profile-list", "native", function (_, profiles_property)
     load_profiles(profiles_property)
 
     if #profiles < 1 and mp.get_property("load-auto-profiles") == "auto" then
-        exit()
+        -- make it exit immediately
+        _G.mp_event_loop = function() end
         return
     end
 
